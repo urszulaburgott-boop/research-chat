@@ -1,0 +1,1 @@
+MVP chat – první nasazení
