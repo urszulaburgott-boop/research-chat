@@ -99,13 +99,17 @@ export default function Dashboard() {
                   <div style={{ fontWeight: 600 }}>{p.name}</div>
                   <div style={{ fontSize: 12, color: "#333" }}>ID: {p.id}</div>
                   <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                    <button onClick={() => { setEditingId(p.id); setEditingName(p.name); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc" }}>
-                      Přejmenovat
-                    </button>
-                    <button onClick={() => removeProject(p.id)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc", background: "#ffe5d6" }}>
-                      Smazat
-                    </button>
-                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
++                    <a href={`/project?id=${encodeURIComponent(p.id)}`} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc", textDecoration: "none" }}>
++                      Otevřít projekt
++                    </a>
+                     <button onClick={() => { setEditingId(p.id); setEditingName(p.name); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc" }}>
+                       Přejmenovat
+                     </button>
+                     <button onClick={() => removeProject(p.id)} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc", background: "#ffe5d6" }}>
+                       Smazat
+                     </button>
+                   </div>
                 </>
               )}
             </div>
