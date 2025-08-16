@@ -51,8 +51,6 @@ export default function ChatPodPage() {
     }
   }
 
-import { createRespondentLink, createClientLink } from "../lib/chatApi";
-
 // ... v komponentě máš k dispozici project.id a chat.id
 async function onCreateRespondent() {
   if (!newRespName.trim()) return;
