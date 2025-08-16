@@ -1,5 +1,5 @@
 import { supabase } from "../lib/supabase";
-
+import * as React from "react";
 export default function Debug() {
   return (
     <div style={{ padding: 16, fontFamily: "system-ui, sans-serif" }}>
