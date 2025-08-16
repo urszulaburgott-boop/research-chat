@@ -51,28 +51,32 @@ export default function ChatPodPage() {
     }
   }
 
-  async function addResp() {
-    const name = respName.trim();
-    if (!name) return;
-    try {
-      const row = await createRespondentLink(chatId, name);
-      setLinks(prev => [...prev, row]);
-      setRespName("");
-    } catch (e) {
-      alert("Chyba při vytváření odkazu: " + e.message);
-    }
-  }
+import { createRespondentLink, createClientLink } from "../lib/chatApi";
 
-  async function addClient() {
-    try {
-      const row = await createClientLink(chatId, clientLabel.trim() || "Klient (multi)");
-      setLinks(prev => [...prev, row]);
-      setClientLabel("");
-    } catch (e) {
-      alert("Chyba při vytváření odkazu: " + e.message);
-    }
+// ... v komponentě máš k dispozici project.id a chat.id
+async function onCreateRespondent() {
+  if (!newRespName.trim()) return;
+  try {
+    const row = await createRespondentLink(project.id, chat.id, newRespName.trim());
+    // přidej řádek do lokálního stavu (a/nebo znovu načti)
+    setRespLinks(prev => [...prev, row]);
+    setNewRespName("");
+  } catch (e) {
+    console.error(e);
+    alert("Nepodařilo se vytvořit odkaz: " + e.message);
   }
+}
 
+async function onCreateClient() {
+  try {
+    const row = await createClientLink(project.id, chat.id, newClientLabel.trim());
+    setClientLinks(prev => [...prev, row]);
+    setNewClientLabel("");
+  } catch (e) {
+    console.error(e);
+    alert("Nepodařilo se vytvořit klientský odkaz: " + e.message);
+  }
+}
   async function bulkCreate() {
     try {
       const rows = await bulkCreateRespondents(chatId, bulkText);
