@@ -287,3 +287,11 @@ async function onCreateClient() {
     </Layout>
   );
 }
+// ukáže poslední chybu z API (jen dočasně)
+const [lastErr, setLastErr] = useState(null);
+
+// v catch blocích navíc:
+setLastErr(e);
+
+// a někde pod formulář:
+{lastErr && <div style={{color: "red", fontSize: 12}}>API chyba: {String(lastErr.message || lastErr)}</div>}
