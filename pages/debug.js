@@ -1,5 +1,5 @@
 import Layout from "../components/Layout";
-import { supabase } from "../lib/supabaseClient";
+import { supabase } from "./supabase";
 
 export default function DebugPage(props) {
   return (
