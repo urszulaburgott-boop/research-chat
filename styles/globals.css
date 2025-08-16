@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Základní vzhled, černý text */
+html, body {
+  color: #000;
+  background: #fff;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, "Source Sans Pro", Arial, sans-serif;
+}
+
+a { text-decoration: underline; }
