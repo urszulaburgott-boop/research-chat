@@ -70,6 +70,13 @@ export default function ChatPod() {
     }
   }
 
+  function copy(text) {
+    navigator.clipboard?.writeText(text).then(
+      () => alert("Zkopírováno."),
+      () => alert("Nepodařilo se zkopírovat.")
+    );
+  }
+
   return (
     <Layout>
       <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
@@ -96,14 +103,15 @@ export default function ChatPod() {
         {links.length === 0 ? (
           <div style={{ color: "#888" }}>Zatím žádné linky…</div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "180px 1fr 1fr 1fr auto", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr auto auto", gap: 8 }}>
             <div style={hdr()}>Role</div>
             <div style={hdr()}>Interní jméno</div>
             <div style={hdr()}>Přezdívka (z brány)</div>
             <div style={hdr()}>URL</div>
             <div style={hdr()}></div>
+            <div style={hdr()}></div>
             {links.map((l) => (
-              <FragmentRow key={l.id} link={l} onDelete={() => removeLink(l.id)} />
+              <FragmentRow key={l.id} link={l} onDelete={() => removeLink(l.id)} onCopy={() => copy(l.url)} />
             ))}
           </div>
         )}
@@ -112,7 +120,7 @@ export default function ChatPod() {
   );
 }
 
-function FragmentRow({ link, onDelete }) {
+function FragmentRow({ link, onDelete, onCopy }) {
   return (
     <>
       <div style={cell()}>{link.role}</div>
@@ -122,6 +130,9 @@ function FragmentRow({ link, onDelete }) {
         <a href={link.url} target="_blank" rel="noreferrer">
           {link.url}
         </a>
+      </div>
+      <div style={{ ...cell(), textAlign: "right" }}>
+        <button onClick={onCopy} style={btn()}>Kopírovat</button>
       </div>
       <div style={{ ...cell(), textAlign: "right" }}>
         <button onClick={onDelete} style={btnDanger()}>Smazat</button>
