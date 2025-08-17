@@ -1,186 +1,316 @@
+// pages/chat-pod.js
 import { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "../components/Layout";
+import {
+  getChatWindowById,
+  listLinks,
+  listParticipants,
+  listMessages,
+  subscribeMessages,
+  sendMessage,
+  getNote,
+  saveNote,
+  createRespondentLink,
+  createClientLink,
+  deleteLink,
+} from "../lib/chatApi";
 import { useRouter } from "next/router";
-import { listParticipants, listMessagesForViewer, sendMessage } from "../lib/chatApi";
-
-// Pomůcka: uloží a čte drobná data z localStorage pro konkrétní chat
-function useLocalNote(chatId, key, initial = "") {
-  const storageKey = chatId ? `chat:${chatId}:${key}` : null;
-  const [val, setVal] = useState(initial);
-
-  useEffect(() => {
-    if (!storageKey) return;
-    try {
-      const v = localStorage.getItem(storageKey);
-      if (v !== null) setVal(v);
-    } catch {}
-  }, [storageKey]);
-
-  useEffect(() => {
-    if (!storageKey) return;
-    try {
-      localStorage.setItem(storageKey, val || "");
-    } catch {}
-  }, [storageKey, val]);
-
-  return [val, setVal];
-}
 
 export default function ChatPod() {
   const router = useRouter();
-  const chatId = router.query.id || router.query.chat || ""; // snažíme se vytáhnout chat_id z URL
-  // role a link aktuálního uživatele – u moderátora je role "client"
-  const myRole = useMemo(() => (typeof window !== "undefined" ? localStorage.getItem("my_role") : null), []);
-  const myLinkId = useMemo(() => (typeof window !== "undefined" ? localStorage.getItem("my_link_id") : null), []);
-
-  const isModerator = myRole === "client";
+  const chatId = router.query.id || router.query.chat || null;
 
   // UI stav
+  const [chat, setChat] = useState(null);
   const [participants, setParticipants] = useState([]);
+  const [links, setLinks] = useState([]);
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [dmTarget, setDmTarget] = useState(null); // {id, label} nebo null
-  const inputRef = useRef(null);
+  const [dmTarget, setDmTarget] = useState(null); // zvolený příjemce DM
+  const [text, setText] = useState("");
+  const [note, setNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const listEndRef = useRef(null);
 
-  // pravý sloupek – poznámky moderátora (jen localStorage)
-  const [modNotes, setModNotes] = useLocalNote(chatId, "mod_notes", "");
-
-  // Načtení účastníků + zpráv
-  async function refreshAll() {
-    if (!chatId) return;
-    const [pp, mm] = await Promise.all([
-      listParticipants(chatId),
-      listMessagesForViewer(chatId, isModerator ? null : myLinkId),
-    ]);
-    setParticipants(pp);
-    setMessages(mm);
-  }
-
+  // načtení podokna + dat
   useEffect(() => {
-    refreshAll();
-    // jednoduché “polling” každé 3 vteřiny
-    const t = setInterval(refreshAll, 3000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId, isModerator, myLinkId]);
+    if (!chatId) return;
 
-  // Odeslání zprávy (Enter)
-  async function doSend() {
-    const text = input.trim();
-    if (!text || !chatId) return;
-    await sendMessage(chatId, text, myLinkId || null, dmTarget?.id || null);
-    setInput("");
-    setDmTarget(null); // po odeslání DM okno zavřeme
-    refreshAll();
-    inputRef.current?.focus();
-  }
+    (async () => {
+      try {
+        const [c, ls, ps, ms, n] = await Promise.all([
+          getChatWindowById(chatId),
+          listLinks(chatId),
+          listParticipants(chatId),
+          listMessages(chatId),
+          getNote(chatId),
+        ]);
+        setChat(c);
+        setLinks(ls);
+        setParticipants(ps);
+        setMessages(ms);
+        setNote(n?.content || "");
+      } catch (e) {
+        console.error(e);
+        alert("Chyba při načítání podokna.");
+      }
+    })();
 
-  function onKeyDown(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doSend();
+    // realtime zprávy
+    const unsubscribe = subscribeMessages(chatId, (m) => {
+      setMessages((prev) => [...prev, m]);
+      scrollToEnd();
+    });
+    return unsubscribe;
+  }, [chatId]);
+
+  function scrollToEnd() {
+    if (listEndRef.current) {
+      listEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }
 
-  // Label respondenta
-  function labelOf(p) {
-    return p.nickname?.trim() || p.internal_name?.trim() || p.id.slice(0, 6);
+  useEffect(() => {
+    scrollToEnd();
+  }, [messages]);
+
+  const dmLabel = useMemo(() => {
+    if (!dmTarget) return "Všichni";
+    const name = dmTarget.nickname || dmTarget.internal_name || `ID ${dmTarget.id}`;
+    return `DM: ${name}`;
+  }, [dmTarget]);
+
+  async function handleSend() {
+    const content = text.trim();
+    if (!content) return;
+    try {
+      await sendMessage(chatId, content, null, dmTarget?.id || null);
+      setText("");
+    } catch (e) {
+      console.error(e);
+      alert("Zprávu se nepodařilo odeslat.");
+    }
   }
 
-  // UI
+  async function handleSaveNote() {
+    try {
+      setSavingNote(true);
+      await saveNote(chatId, note);
+    } catch (e) {
+      console.error(e);
+      alert("Poznámku se nepodařilo uložit.");
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+  // Správa linků v podokně (rychlé ovládací prvky nahoře)
+  async function addRespondentLink() {
+    try {
+      const row = await createRespondentLink(chatId, "");
+      setLinks((prev) => [...prev, row]);
+      setParticipants((prev) => [...prev, { id: row.id, role: row.role, internal_name: row.internal_name, nickname: row.nickname }]);
+    } catch (e) {
+      console.error(e);
+      alert("Link respondenta se nepodařilo vytvořit.");
+    }
+  }
+  async function addClientLink() {
+    try {
+      const row = await createClientLink(chatId, "Klient (multi)");
+      setLinks((prev) => [...prev, row]);
+      setParticipants((prev) => [...prev, { id: row.id, role: row.role, internal_name: row.internal_name, nickname: row.nickname }]);
+    } catch (e) {
+      console.error(e);
+      alert("Link klienta se nepodařilo vytvořit.");
+    }
+  }
+  async function removeLink(id) {
+    if (!confirm("Opravdu smazat link?")) return;
+    try {
+      await deleteLink(id);
+      setLinks((prev) => prev.filter((l) => l.id !== id));
+      setParticipants((prev) => prev.filter((p) => p.id !== id));
+      if (dmTarget?.id === id) setDmTarget(null);
+    } catch (e) {
+      console.error(e);
+      alert("Link se nepodařilo smazat.");
+    }
+  }
+
   return (
     <Layout>
-      <div style={{ display: "grid", gridTemplateColumns: isModerator ? "260px 1fr 280px" : "1fr", gap: 16 }}>
-        {/* Levý sloupec – jen pro moderátora */}
-        {isModerator && (
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, height: "calc(100vh - 160px)", overflow: "auto" }}>
-            <h3 style={{ marginTop: 0 }}>Respondenti</h3>
-            {participants.filter(p => p.role === "respondent").map(p => (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px dashed #eee" }}>
-                <div>{labelOf(p)}</div>
-                <button onClick={() => setDmTarget({ id: p.id, label: labelOf(p) })} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #ccc" }}>
-                  Napsat DM
-                </button>
-              </div>
-            ))}
+      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
+        Podokno chatu {chat ? `— ${chat.title || chat.id}` : ""}
+      </h2>
 
-            {dmTarget && (
-              <div style={{ marginTop: 12, padding: 10, border: "1px solid #ddd", borderRadius: 8, background: "#fafafa" }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>Soukromá zpráva pro: {dmTarget.label}</div>
-                <textarea
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={onKeyDown}
-                  ref={inputRef}
-                  rows={3}
-                  placeholder="Napište zprávu (Enter = odeslat, Shift+Enter = nový řádek)"
-                  style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
-                />
-                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                  <button onClick={doSend} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc", background: "#e6ffe6" }}>
-                    Odeslat DM
-                  </button>
-                  <button onClick={() => { setDmTarget(null); setInput(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc" }}>
-                    Zrušit
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+      {/* horní lišta pro správu linků */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={addRespondentLink} style={btn()}>
+          + Link pro respondenta
+        </button>
+        <button onClick={addClientLink} style={btn()}>
+          + Link pro klienta
+        </button>
+      </div>
 
-        {/* Střed – chat */}
-        <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, height: "calc(100vh - 160px)", display: "flex", flexDirection: "column" }}>
-          <div style={{ flex: 1, overflow: "auto", paddingRight: 6 }}>
-            {messages.map((m) => {
-              const isDm = !!m.recipient_link_id;
+      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr 300px", gap: 12, alignItems: "stretch" }}>
+        {/* LEVÝ SLOUPEC — účastníci a DM výběr */}
+        <div style={panel()}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
+          <button onClick={() => setDmTarget(null)} style={dmButton(!dmTarget)}>
+            Všichni (veřejná zpráva)
+          </button>
+          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+            {participants.map((p) => {
+              const label = p.nickname || p.internal_name || `${p.role} #${p.id}`;
+              const active = dmTarget?.id === p.id;
               return (
-                <div key={m.id} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, color: "#666" }}>
-                    {isDm ? "DM" : "Veřejná"} zpráva
-                  </div>
-                  <div>{m.text}</div>
-                  <div style={{ height: 1, background: "#eee", marginTop: 8 }} />
-                </div>
+                <button key={p.id} onClick={() => setDmTarget(p)} style={dmButton(active)}>
+                  {label} {p.role === "client" ? "👤" : "🧑"}
+                </button>
               );
             })}
           </div>
 
-          {/* Composer – společný (když není aktivní DM, posílá veřejně) */}
-          {!dmTarget && (
-            <div style={{ marginTop: 8 }}>
-              <textarea
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={onKeyDown}
-                ref={inputRef}
-                rows={3}
-                placeholder="Napište zprávu (Enter = odeslat, Shift+Enter = nový řádek)"
-                style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
-              />
-              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-                <button onClick={doSend} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #ccc", background: "#e6f0ff" }}>
-                  Odeslat
-                </button>
-              </div>
-            </div>
-          )}
+          <div style={{ marginTop: 16, fontSize: 12, color: "#666" }}>
+            Tip: kliknutím vybereš příjemce; znovu „Všichni“ vrátí veřejné zprávy.
+          </div>
         </div>
 
-        {/* Pravý sloupec – poznámky moderátora */}
-        {isModerator && (
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, height: "calc(100vh - 160px)", overflow: "auto" }}>
-            <h3 style={{ marginTop: 0 }}>Poznámky (jen moderátor)</h3>
+        {/* STŘED — chat */}
+        <div style={panel({ display: "flex", flexDirection: "column" })}>
+          <div style={{ marginBottom: 8, fontWeight: 700 }}>
+            Zprávy ({dmLabel})
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
+            {messages.length === 0 ? (
+              <div style={{ color: "#888" }}>Zatím žádné zprávy…</div>
+            ) : (
+              messages.map((m) => (
+                <div key={m.id} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, color: "#666" }}>
+                    {m.recipient_link_id ? "DM" : "Veřejná"} • {new Date(m.created_at).toLocaleTimeString()}
+                  </div>
+                  <div>{m.text}</div>
+                </div>
+              ))
+            )}
+            <div ref={listEndRef} />
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <textarea
-              value={modNotes}
-              onChange={e => setModNotes(e.target.value)}
-              placeholder="Sem si piš poznámky během rozhovoru. Ukládá se do prohlížeče."
-              rows={18}
-              style={{ width: "100%", padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={`Napiš zprávu (${dmTarget ? "DM" : "veřejná"})…`}
+              rows={3}
+              style={{ flex: 1, border: "1px solid #ddd", borderRadius: 8, padding: 8 }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
             />
+            <button onClick={handleSend} style={btn()}>
+              Odeslat
+            </button>
+          </div>
+
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
+            Enter = odeslat, Shift+Enter = nový řádek
+          </div>
+        </div>
+
+        {/* PRAVÝ SLOUPEC — poznámky moderátora */}
+        <div style={panel()}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Poznámky moderátora</div>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={12}
+            placeholder="Sem si piš poznámky…"
+            style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: 8 }}
+          />
+          <button onClick={handleSaveNote} style={{ ...btn(), marginTop: 8 }}>
+            {savingNote ? "Ukládám…" : "Uložit poznámku"}
+          </button>
+          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
+            Poznámky jsou jen pro moderátora (neposílají se do chatu).
+          </div>
+        </div>
+      </div>
+
+      {/* dole – seznam linků (pro přehled) */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Linky pro připojení</div>
+        {links.length === 0 ? (
+          <div style={{ color: "#888" }}>Zatím žádné linky…</div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            {links.map((l) => (
+              <div key={l.id} style={{ display: "contents" }}>
+                <div style={{ padding: 8, border: "1px solid #eee", borderRadius: 8 }}>
+                  <div style={{ fontSize: 12, color: "#666" }}>{l.role}</div>
+                  <div style={{ wordBreak: "break-all" }}>
+                    <a href={l.url} target="_blank" rel="noreferrer">{l.url}</a>
+                  </div>
+                  {(l.internal_name || l.nickname) && (
+                    <div style={{ fontSize: 12, color: "#333", marginTop: 4 }}>
+                      {l.nickname || l.internal_name}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button onClick={() => removeLink(l.id)} style={btnDanger()}>
+                    Smazat
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
     </Layout>
   );
+}
+
+/** ===== styly ===== */
+function panel(extra = {}) {
+  return {
+    border: "1px solid #eee",
+    borderRadius: 12,
+    padding: 12,
+    background: "#fff",
+    ...extra,
+  };
+}
+function btn() {
+  return {
+    padding: "8px 12px",
+    borderRadius: 8,
+    border: "1px solid #ccc",
+    background: "#e6e6ff",
+    cursor: "pointer",
+  };
+}
+function btnDanger() {
+  return {
+    padding: "8px 12px",
+    borderRadius: 8,
+    border: "1px solid #e0b4b4",
+    background: "#ffe6e6",
+    cursor: "pointer",
+  };
+}
+function dmButton(active) {
+  return {
+    textAlign: "left",
+    padding: "6px 8px",
+    borderRadius: 8,
+    border: active ? "2px solid #7c7cff" : "1px solid #ddd",
+    background: active ? "#f2f2ff" : "#fff",
+    cursor: "pointer",
+  };
 }
