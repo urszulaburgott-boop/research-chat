@@ -8,19 +8,26 @@ import {
   listMessages,
   subscribeMessages,
   sendMessage,
+  getLinkById,
 } from "../lib/chatApi";
 
 export default function Chat() {
   const router = useRouter();
   const chatId = router.query.chat || router.query.id || null;
-  const myLinkId = router.query.link ? String(router.query.link) : null; // kdo jsem (volitelné)
+  const myLinkId = router.query.link ? String(router.query.link) : null; // přítomno u respondenta/klienta, moderátor nemá
 
   const [chat, setChat] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [dmTarget, setDmTarget] = useState(null);
   const [text, setText] = useState("");
+  const [isModerator, setIsModerator] = useState(false);
   const listEndRef = useRef(null);
+
+  useEffect(() => {
+    // moderátor = nemá link v URL
+    setIsModerator(!myLinkId);
+  }, [myLinkId]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -52,16 +59,17 @@ export default function Chat() {
   }, [messages]);
 
   const dmLabel = useMemo(() => {
-    if (!dmTarget) return "Všichni";
+    if (!isModerator || !dmTarget) return "Všichni";
     const name = dmTarget.nickname || dmTarget.internal_name || `ID ${dmTarget.id}`;
     return `DM: ${name}`;
-  }, [dmTarget]);
+  }, [dmTarget, isModerator]);
 
   async function handleSend() {
     const content = text.trim();
     if (!content) return;
     try {
-      await sendMessage(chatId, content, myLinkId, dmTarget?.id || null);
+      const recipient = isModerator ? (dmTarget?.id || null) : null; // respondent nikdy neposílá DM
+      await sendMessage(chatId, content, myLinkId, recipient);
       setText("");
     } catch (e) {
       console.error(e);
@@ -75,25 +83,27 @@ export default function Chat() {
         Chat {chat ? `— ${chat.title || chat.id}` : ""}
       </h2>
 
-      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 12, alignItems: "stretch" }}>
-        {/* LEVÝ SLOUPEC — výběr DM */}
-        <div style={panel()}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
-          <button onClick={() => setDmTarget(null)} style={dmButton(!dmTarget)}>
-            Všichni (veřejná zpráva)
-          </button>
-          <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-            {participants.map((p) => {
-              const label = p.nickname || p.internal_name || `${p.role} #${p.id}`;
-              const active = dmTarget?.id === p.id;
-              return (
-                <button key={p.id} onClick={() => setDmTarget(p)} style={dmButton(active)}>
-                  {label} {p.role === "client" ? "👤" : "🧑"}
-                </button>
-              );
-            })}
+      <div style={{ display: "grid", gridTemplateColumns: isModerator ? "240px 1fr" : "1fr", gap: 12, alignItems: "stretch" }}>
+        {/* LEVÝ SLOUPEC — výběr DM (jen pro moderátora) */}
+        {isModerator && (
+          <div style={panel()}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
+            <button onClick={() => setDmTarget(null)} style={dmButton(!dmTarget)}>
+              Všichni (veřejná zpráva)
+            </button>
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+              {participants.map((p) => {
+                const label = p.nickname || p.internal_name || `${p.role} #${p.id}`;
+                const active = dmTarget?.id === p.id;
+                return (
+                  <button key={p.id} onClick={() => setDmTarget(p)} style={dmButton(active)}>
+                    {label} {p.role === "client" ? "👤" : "🧑"}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* STŘED — chat */}
         <div style={panel({ display: "flex", flexDirection: "column" })}>
@@ -121,7 +131,7 @@ export default function Chat() {
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
-              placeholder={`Napiš zprávu (${dmTarget ? "DM" : "veřejná"})…`}
+              placeholder={`Napiš zprávu ${isModerator ? (dmTarget ? "(DM)" : "(veřejná)") : "(veřejná)"}…`}
               rows={3}
               style={{ flex: 1, border: "1px solid #ddd", borderRadius: 8, padding: 8 }}
               onKeyDown={(e) => {
