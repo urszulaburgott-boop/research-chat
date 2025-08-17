@@ -1,145 +1,97 @@
 // pages/project.js
-import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
-import Layout from "../components/Layout";
-import supabase from "../lib/supabaseClient";
+import { useEffect, useState } from 'react';
+import { listChatWindows, createChatWindow, renameChatWindow } from '../lib/chatApi';
 
-export default function ProjectPage() {
-  const router = useRouter();
-  const { isReady, query } = router;
-  const projectId = query?.id;
+export default function Project() {
+  // PRO JEDNODUCHOST: ID projektu si tu „natvrdo“ držíme v localStorage.
+  // Pokud ho nemáš, dej si do URL ?project=<uuid> jednou a my si ho uložíme.
+  const [projectId, setProjectId] = useState(null);
+  const [chatWindows, setChatWindows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [renameMap, setRenameMap] = useState({});
 
-  const [project, setProject] = useState(null);
-  const [chats, setChats] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get('project');
+    const saved = window.localStorage.getItem('project_id');
+    if (q) {
+      window.localStorage.setItem('project_id', q);
+      setProjectId(q);
+    } else if (saved) {
+      setProjectId(saved);
+    }
+  }, []);
 
-  async function loadAll(pid) {
-    setError("");
+  async function refresh() {
+    if (!projectId) return;
     setLoading(true);
     try {
-      const { data: proj, error: eProj } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("id", pid)
-        .is("deleted_at", null)
-        .single();
-      if (eProj) throw eProj;
-      setProject(proj);
-
-      const { data: cw, error: eCw } = await supabase
-        .from("chat_windows")
-        .select("*")
-        .eq("project_id", pid)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: true });
-
-      if (eCw) throw eCw;
-      setChats(cw || []);
-    } catch (e) {
-      setError(e.message || String(e));
+      const rows = await listChatWindows(projectId);
+      setChatWindows(rows);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    if (!isReady || !projectId) return;
-    loadAll(projectId);
-  }, [isReady, projectId]);
+  useEffect(() => { refresh(); }, [projectId]);
 
-  async function createChatWindow() {
-    if (!projectId) return;
-    setCreating(true);
-    setError("");
-    try {
-      const title = `Podokno ${chats.length + 1}`;
-      const { data, error: e } = await supabase
-        .from("chat_windows")
-        .insert([{ project_id: projectId, title }]) // jen tyto sloupce
-        .select()
-        .single();
-      if (e) throw e;
-
-      setChats((prev) => [...prev, data]);
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setCreating(false);
-    }
+  async function onCreate() {
+    if (!projectId) { alert('Chybí project_id (předej jednou ?project=<uuid> v URL).'); return; }
+    await createChatWindow(projectId);
+    await refresh();
   }
 
-  function openChat(c) {
-    router.push(`/chat-pod?id=${c.id}`);
+  async function onRename(id) {
+    const val = renameMap[id];
+    if (!val) return;
+    await renameChatWindow(id, val);
+    setRenameMap(m => ({ ...m, [id]: '' }));
+    await refresh();
   }
 
   return (
-    <Layout>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>
-          Projekt: {project ? project.name || project.id : projectId || "—"}
-        </h1>
-        <button
-          onClick={createChatWindow}
-          disabled={creating || !projectId}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            background: creating ? "#f2f2f2" : "#e6ffe6",
-            cursor: creating ? "not-allowed" : "pointer",
-          }}
-        >
-          {creating ? "Vytvářím…" : "Přidat podokno"}
-        </button>
+    <div>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Projekt</h1>
+      <div style={{ marginBottom: 16, padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+        <div>Project ID: <code>{projectId || '(není nastaveno)'}</code></div>
+        <div style={{ marginTop: 8 }}>
+          <button onClick={onCreate} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6e6ff' }}>
+            Přidat podokno
+          </button>
+        </div>
       </div>
 
-      {error && (
-        <div style={{ marginTop: 12, color: "#b00020" }}>
-          Chyba: {error}
-        </div>
-      )}
-
-      {loading ? (
-        <p style={{ marginTop: 16 }}>Načítám…</p>
-      ) : (
-        <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-          {chats.length === 0 ? (
-            <p>Žádná podokna zatím nejsou. Klikni na „Přidat podokno“.</p>
-          ) : (
-            chats.map((c) => (
-              <div
-                key={c.id}
-                style={{
-                  border: "1px solid #ddd",
-                  borderRadius: 8,
-                  padding: 12,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 600 }}>{c.title || c.id}</div>
-                  <div style={{ fontSize: 12, color: "#666" }}>{c.id}</div>
-                </div>
-                <button
-                  onClick={() => openChat(c)}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 6,
-                    border: "1px solid #ccc",
-                    background: "#eef",
-                  }}
-                >
-                  Otevřít
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </Layout>
+      <div style={{ display: 'grid', gap: 12 }}>
+        {loading && <div>Načítám…</div>}
+        {!loading && chatWindows.map(w => (
+          <div key={w.id} style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+            <div style={{ fontWeight: 600 }}>{w.title || '(bez názvu)'}</div>
+            <div style={{ fontSize: 12, color: '#555' }}>chat_id: {w.id}</div>
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <a href={`/chat-pod?chat=${encodeURIComponent(w.id)}`} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#f3f3ff', textDecoration: 'none' }}>
+                Otevřít podokno
+              </a>
+              <a href={`/chat?chat=${encodeURIComponent(w.id)}&as=moderator`} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#f3fff3', textDecoration: 'none' }}>
+                Otevřít chat jako moderátor
+              </a>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <input
+                placeholder="přejmenovat…"
+                value={renameMap[w.id] || ''}
+                onChange={(e) => setRenameMap(m => ({ ...m, [w.id]: e.target.value }))}
+                style={{ padding: 6, border: '1px solid #ccc', borderRadius: 6 }}
+              />
+              <button onClick={() => onRename(w.id)} style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc' }}>
+                Uložit název
+              </button>
+            </div>
+          </div>
+        ))}
+        {!loading && chatWindows.length === 0 && (
+          <div style={{ color: '#666' }}>Zatím žádná podokna.</div>
+        )}
+      </div>
+    </div>
   );
 }
