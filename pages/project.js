@@ -6,7 +6,8 @@ import supabase from "../lib/supabaseClient";
 
 export default function ProjectPage() {
   const router = useRouter();
-  const { id: projectId } = router.query;
+  const { isReady, query } = router;
+  const projectId = query?.id;
 
   const [project, setProject] = useState(null);
   const [chats, setChats] = useState([]);
@@ -14,48 +15,49 @@ export default function ProjectPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
+  async function loadAll(pid) {
+    setError("");
+    setLoading(true);
+    try {
+      const { data: proj, error: eProj } = await supabase
+        .from("projects")
+        .select("*")
+        .eq("id", pid)
+        .is("deleted_at", null)
+        .single();
+      if (eProj) throw eProj;
+      setProject(proj);
+
+      const { data: cw, error: eCw } = await supabase
+        .from("chat_windows")
+        .select("*")
+        .eq("project_id", pid)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true });
+
+      if (eCw) throw eCw;
+      setChats(cw || []);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    if (!projectId) return;
-    (async () => {
-      try {
-        setLoading(true);
-        setError("");
-
-        const { data: proj, error: eProj } = await supabase
-          .from("projects")
-          .select("*")
-          .eq("id", projectId)
-          .is("deleted_at", null)
-          .single();
-        if (eProj) throw eProj;
-        setProject(proj);
-
-        const { data: cw, error: eCw } = await supabase
-          .from("chat_windows")
-          .select("*")
-          .eq("project_id", projectId)
-          .is("deleted_at", null)
-          .order("created_at", { ascending: true });
-        if (eCw) throw eCw;
-
-        setChats(cw || []);
-      } catch (e) {
-        setError(e.message || String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [projectId]);
+    if (!isReady || !projectId) return;
+    loadAll(projectId);
+  }, [isReady, projectId]);
 
   async function createChatWindow() {
+    if (!projectId) return;
+    setCreating(true);
+    setError("");
     try {
-      setCreating(true);
-      setError("");
-
       const title = `Podokno ${chats.length + 1}`;
       const { data, error: e } = await supabase
         .from("chat_windows")
-        .insert([{ project_id: projectId, title }]) // bez chat_date / links_disabled
+        .insert([{ project_id: projectId, title }]) // jen tyto sloupce
         .select()
         .single();
       if (e) throw e;
@@ -94,7 +96,9 @@ export default function ProjectPage() {
       </div>
 
       {error && (
-        <div style={{ marginTop: 12, color: "#b00020" }}>Chyba: {error}</div>
+        <div style={{ marginTop: 12, color: "#b00020" }}>
+          Chyba: {error}
+        </div>
       )}
 
       {loading ? (
