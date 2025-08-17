@@ -1,158 +1,117 @@
 // pages/chat-pod.js
-import { useEffect, useState } from "react";
-import Layout from "../components/Layout";
-import { useRouter } from "next/router";
-import {
-  getChatWindowById,
-  listLinks,
-  createRespondentLink,
-  createClientLink,
-  deleteLink,
-} from "../lib/chatApi";
+import { useEffect, useState } from 'react';
+import { getChatWindowById, listLinks, createRespondentLink, createClientLink, deleteLink, setLinksDisabled } from '../lib/chatApi';
 
 export default function ChatPod() {
-  const router = useRouter();
-  const chatId = router.query.id || router.query.chat || null;
-
+  const [chatId, setChatId] = useState(null);
   const [chat, setChat] = useState(null);
   const [links, setLinks] = useState([]);
-  const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [newRespName, setNewRespName] = useState('');
+  const [disableLinks, setDisableLinks] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('chat');
+    if (c) setChatId(c);
+  }, []);
+
+  async function refresh() {
     if (!chatId) return;
-    (async () => {
-      try {
-        const c = await getChatWindowById(chatId);
-        const ls = await listLinks(chatId);
-        setChat(c);
-        setLinks(ls);
-      } catch (e) {
-        console.error(e);
-        alert("Chyba při načítání podokna.");
-      }
-    })();
-  }, [chatId]);
-
-  async function addRespondent() {
+    setLoading(true);
     try {
-      setCreating(true);
-      const row = await createRespondentLink(chatId, "");
-      setLinks((prev) => [...prev, row]);
-    } catch (e) {
-      console.error(e);
-      alert("Link respondenta se nepodařilo vytvořit.");
+      const w = await getChatWindowById(chatId);
+      setChat(w);
+      setDisableLinks(!!w?.links_disabled);
+      const ls = await listLinks(chatId);
+      setLinks(ls);
     } finally {
-      setCreating(false);
+      setLoading(false);
     }
   }
 
-  async function addClient() {
-    try {
-      setCreating(true);
-      const row = await createClientLink(chatId, "Klient (multi)");
-      setLinks((prev) => [...prev, row]);
-    } catch (e) {
-      console.error(e);
-      alert("Link klienta se nepodařilo vytvořit.");
-    } finally {
-      setCreating(false);
-    }
-  }
+  useEffect(() => { refresh(); }, [chatId]);
 
-  async function removeLink(id) {
-    if (!confirm("Opravdu smazat link?")) return;
-    try {
-      await deleteLink(id);
-      setLinks((prev) => prev.filter((l) => l.id !== id));
-    } catch (e) {
-      console.error(e);
-      alert("Link se nepodařilo smazat.");
-    }
+  async function onCreateRespondent() {
+    await createRespondentLink(chatId, newRespName.trim());
+    setNewRespName('');
+    await refresh();
+  }
+  async function onCreateClient() {
+    await createClientLink(chatId, 'Klient (multi)');
+    await refresh();
+  }
+  async function onDelete(id) {
+    await deleteLink(id);
+    await refresh();
+  }
+  async function onToggleLinksDisabled() {
+    const next = !disableLinks;
+    setDisableLinks(next);
+    await setLinksDisabled(chatId, next);
+    await refresh();
   }
 
   function copy(text) {
-    navigator.clipboard?.writeText(text).then(
-      () => alert("Zkopírováno."),
-      () => alert("Nepodařilo se zkopírovat.")
-    );
+    navigator.clipboard?.writeText(text);
+    alert('Zkopírováno do schránky.');
   }
 
   return (
-    <Layout>
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
-        Podokno chatu {chat ? `— ${chat.title || chat.id}` : ""}
-      </h2>
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-        <button
-          onClick={() => router.push(`/chat?chat=${encodeURIComponent(chatId)}`)}
-          style={btnPrimary()}
-        >
-          🔵 Otevřít chat
-        </button>
-        <button onClick={addRespondent} disabled={creating} style={btn()}>
-          + Link pro respondenta
-        </button>
-        <button onClick={addClient} disabled={creating} style={btn()}>
-          + Link pro klienta
-        </button>
+    <div>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 10 }}>Podokno chatu</h1>
+      <div style={{ marginBottom: 12, padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+        <div>chat_id: <code>{chatId}</code></div>
+        <div style={{ marginTop: 6 }}>
+          <a href={`/chat?chat=${encodeURIComponent(chatId)}&as=moderator`} style={{ marginRight: 8 }}>Otevřít chat jako moderátor</a>
+          <button onClick={onToggleLinksDisabled} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: disableLinks ? '#ffecec' : '#ecffec' }}>
+            {disableLinks ? 'Linky jsou vypnuté' : 'Linky jsou zapnuté'}
+          </button>
+        </div>
       </div>
 
-      <div style={panel()}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Linky pro připojení</div>
-        {links.length === 0 ? (
-          <div style={{ color: "#888" }}>Zatím žádné linky…</div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr auto auto", gap: 8 }}>
-            <div style={hdr()}>Role</div>
-            <div style={hdr()}>Interní jméno</div>
-            <div style={hdr()}>Přezdívka (z brány)</div>
-            <div style={hdr()}>URL</div>
-            <div style={hdr()}></div>
-            <div style={hdr()}></div>
-            {links.map((l) => (
-              <FragmentRow key={l.id} link={l} onDelete={() => removeLink(l.id)} onCopy={() => copy(l.url)} />
-            ))}
+      <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Vytvořit link</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              placeholder="Jméno respondenta (nepovinné)"
+              value={newRespName}
+              onChange={(e) => setNewRespName(e.target.value)}
+              style={{ padding: 6, border: '1px solid #ccc', borderRadius: 6 }}
+            />
+            <button onClick={onCreateRespondent} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#e6e6ff' }}>
+              Vytvořit respondent link
+            </button>
+            <button onClick={onCreateClient} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#fbe6ff' }}>
+              Vytvořit klient link (multi)
+            </button>
           </div>
-        )}
+        </div>
+
+        <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Linky</div>
+          {loading && <div>Načítám…</div>}
+          {!loading && links.length === 0 && <div style={{ color: '#666' }}>Zatím žádné linky.</div>}
+          {!loading && links.map((l) => (
+            <div key={l.id} style={{ padding: 10, border: '1px solid #eee', borderRadius: 8, marginBottom: 8 }}>
+              <div><b>{l.role}</b> — interní jméno: {l.internal_name || <i>(—)</i>} {l.nickname ? <>| přezdívka: <b>{l.nickname}</b></> : null}</div>
+              <div style={{ fontSize: 12, color: '#555' }}>token: {l.token}</div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <a href={l.url} target="_blank" rel="noreferrer" style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', textDecoration: 'none' }}>
+                  Otevřít bránu
+                </a>
+                <button onClick={() => copy(l.url)} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc' }}>
+                  Kopírovat
+                </button>
+                <button onClick={() => onDelete(l.id)} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccaaaa', background: '#ffecec' }}>
+                  Smazat
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
-    </Layout>
+    </div>
   );
 }
-
-function FragmentRow({ link, onDelete, onCopy }) {
-  return (
-    <>
-      <div style={cell()}>{link.role}</div>
-      <div style={cell()}>{link.internal_name || <span style={{color:"#aaa"}}>—</span>}</div>
-      <div style={cell()}>{link.nickname || <span style={{color:"#aaa"}}>—</span>}</div>
-      <div style={{ ...cell(), wordBreak: "break-all" }}>
-        <a href={link.url} target="_blank" rel="noreferrer">
-          {link.url}
-        </a>
-      </div>
-      <div style={{ ...cell(), textAlign: "right" }}>
-        <button onClick={onCopy} style={btn()}>Kopírovat</button>
-      </div>
-      <div style={{ ...cell(), textAlign: "right" }}>
-        <button onClick={onDelete} style={btnDanger()}>Smazat</button>
-      </div>
-    </>
-  );
-}
-
-/** ===== styly ===== */
-function panel(extra = {}) {
-  return { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff", ...extra };
-}
-function btn() {
-  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc", background: "#e6e6ff", cursor: "pointer" };
-}
-function btnPrimary() {
-  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #7c7cff", background: "#dedeff", cursor: "pointer", fontWeight: 600 };
-}
-function btnDanger() {
-  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #e0b4b4", background: "#ffe6e6", cursor: "pointer" };
-}
-function hdr() { return { fontWeight: 700, color: "#444" }; }
-function cell() { return { padding: "6px 4px", borderBottom: "1px solid #f2f2f2" }; }
