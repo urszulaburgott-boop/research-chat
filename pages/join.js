@@ -1,61 +1,108 @@
 // pages/join.js
-import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import Layout from "../components/Layout";
-import supabase from "../lib/supabaseClient";
+import { useRouter } from "next/router";
+import { getLinkByToken, setNicknameOnLink, createConsent } from "../lib/chatApi";
 
 export default function JoinGate() {
   const router = useRouter();
-  const { isReady, query } = router;
-  const type = (query?.type || "").toString();
-  const chatId = (query?.chat || "").toString();
-  const token = (query?.l || "").toString();
+  const { type, chat, l } = router.query;
 
-  const [link, setLink] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [link, setLink] = useState(null);
+  const [nickname, setNickname] = useState("");
+  const [agreeDpa, setAgreeDpa] = useState(false);
+  const [agreeStudy, setAgreeStudy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!isReady) return;
+    if (!l) return;
     (async () => {
-      setLoading(true);
-      setError("");
       try {
-        if (!token) throw new Error("Token nenalezen v URL (parametr l).");
-        const { data, error: e } = await supabase
-          .from("chat_links")
-          .select("*")
-          .eq("token", token)
-          .is("deleted_at", null)
-          .single();
-        if (e) throw e;
-        setLink(data);
+        const row = await getLinkByToken(l);
+        if (!row || row.chat_id !== chat) {
+          setError("Odkaz nenalezen.");
+        } else if (type && row.role !== type) {
+          setError("Odkaz není pro tento typ uživatele.");
+        } else {
+          setLink(row);
+        }
       } catch (e) {
-        setError(e.message || String(e));
+        console.error(e);
+        setError("Odkaz nenalezen.");
       } finally {
         setLoading(false);
       }
     })();
-  }, [isReady, token]);
+  }, [l, chat, type]);
+
+  async function handleEnter() {
+    if (!link) return;
+    if (link.role === "respondent" && !nickname.trim()) {
+      alert("Vyplň přezdívku.");
+      return;
+    }
+    try {
+      if (link.role === "respondent") {
+        // Ulož přezdívku na link
+        await setNicknameOnLink(link.id, nickname.trim());
+        // Ulož souhlas
+        await createConsent(link.id, nickname.trim(), agreeDpa, agreeStudy);
+      }
+      router.replace(`/chat?chat=${encodeURIComponent(link.chat_id)}&link=${encodeURIComponent(link.id)}`);
+    } catch (e) {
+      console.error(e);
+      alert("Nepodařilo se projít bránou.");
+    }
+  }
 
   return (
     <Layout>
-      <h1 style={{ fontSize: 20, fontWeight: 700 }}>Vstupní brána</h1>
+      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
+        {type === "client" ? "Brána klienta" : "Brána respondenta"}
+      </h2>
+
       {loading ? (
-        <p>Načítám…</p>
+        <div>Načítám…</div>
       ) : error ? (
-        <p style={{ color: "#b00020" }}>Odkaz nenalezen. ({error})</p>
-      ) : !link ? (
-        <p>Odkaz nenalezen.</p>
+        <div style={{ color: "crimson" }}>{error}</div>
       ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          <div>
-            <div>Role: <strong>{link.role}</strong>{link.multi ? " (multi)" : ""}</div>
-            <div>Podokno: <code>{link.chat_id}</code></div>
-          </div>
-          <p>Tady bude další logika (přezdívka, souhlasy, vstup do chatu). Prozatím jen ověřujeme, že odkaz existuje.</p>
-        </div>
+        <>
+          {link.role === "respondent" ? (
+            <div style={{ display: "grid", gap: 12, maxWidth: 520 }}>
+              <label>
+                <div style={{ marginBottom: 6 }}>Přezdívka, která se bude zobrazovat v chatu:</div>
+                <input
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value)}
+                  placeholder="Zadejte přezdívku"
+                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: "100%" }}
+                />
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" checked={agreeDpa} onChange={(e) => setAgreeDpa(e.target.checked)} />
+                <span>Souhlasím se zpracováním osobních údajů</span>
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" checked={agreeStudy} onChange={(e) => setAgreeStudy(e.target.checked)} />
+                <span>Souhlasím s účastí ve studii</span>
+              </label>
+              <button onClick={handleEnter} style={btnPrimary()}>
+                Vstoupit do chatu
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p>Jste připraveni vstoupit do chatu jako klient.</p>
+              <button onClick={handleEnter} style={btnPrimary()}>Vstoupit do chatu</button>
+            </div>
+          )}
+        </>
       )}
     </Layout>
   );
+}
+
+function btnPrimary() {
+  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #7c7cff", background: "#dedeff", cursor: "pointer", fontWeight: 600 };
 }
