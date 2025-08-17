@@ -1,173 +1,132 @@
 // pages/chat.js
-import { useEffect, useMemo, useRef, useState } from "react";
-import Layout from "../components/Layout";
-import { useRouter } from "next/router";
-import {
-  getChatWindowById,
-  listParticipants,
-  listMessages,
-  subscribeMessages,
-  sendMessage,
-  getLinkById,
-} from "../lib/chatApi";
+import { useEffect, useRef, useState } from 'react';
+import { listMessages, sendMessage, subscribeMessages, listLinks } from '../lib/chatApi';
 
 export default function Chat() {
-  const router = useRouter();
-  const chatId = router.query.chat || router.query.id || null;
-  const myLinkId = router.query.link ? String(router.query.link) : null; // přítomno u respondenta/klienta, moderátor nemá
-
-  const [chat, setChat] = useState(null);
-  const [participants, setParticipants] = useState([]);
+  const [chatId, setChatId] = useState(null);
+  const [role, setRole] = useState('guest'); // 'moderator' | 'respondent' | 'client'
+  const [name, setName] = useState('');      // z brány nebo "Moderátor"
   const [messages, setMessages] = useState([]);
-  const [dmTarget, setDmTarget] = useState(null);
-  const [text, setText] = useState("");
-  const [isModerator, setIsModerator] = useState(false);
-  const listEndRef = useRef(null);
+  const [text, setText] = useState('');
+  const [participants, setParticipants] = useState([]);
+  const [recipientLinkId, setRecipientLinkId] = useState(''); // jen pro moderátora (DM)
+  const unsubRef = useRef(null);
 
   useEffect(() => {
-    // moderátor = nemá link v URL
-    setIsModerator(!myLinkId);
-  }, [myLinkId]);
+    const ps = new URLSearchParams(window.location.search);
+    const c = ps.get('chat');
+    setChatId(c || null);
 
-  useEffect(() => {
+    // Kdo jsem:
+    const as = ps.get('as'); // pokud je ?as=moderator → moderátor
+    if (as === 'moderator') {
+      setRole('moderator');
+      setName('Moderátor');
+      sessionStorage.setItem('rc_chat_role', 'moderator');
+      sessionStorage.setItem('rc_chat_name', 'Moderátor');
+      sessionStorage.removeItem('rc_link_id'); // moderátor nemá link
+    } else {
+      const r = sessionStorage.getItem('rc_chat_role');
+      const n = sessionStorage.getItem('rc_chat_name');
+      setRole(r || 'guest');
+      setName(n || '');
+    }
+  }, []);
+
+  async function refreshAll() {
     if (!chatId) return;
-    (async () => {
-      try {
-        const [c, ps, ms] = await Promise.all([
-          getChatWindowById(chatId),
-          listParticipants(chatId),
-          listMessages(chatId),
-        ]);
-        setChat(c);
-        setParticipants(ps);
-        setMessages(ms);
-      } catch (e) {
-        console.error(e);
-        alert("Chyba při načítání chatu.");
-      }
-    })();
-
-    const unsub = subscribeMessages(chatId, (m) => {
-      setMessages((prev) => [...prev, m]);
-      if (listEndRef.current) listEndRef.current.scrollIntoView({ behavior: "smooth" });
-    });
-    return unsub;
-  }, [chatId]);
-
-  useEffect(() => {
-    if (listEndRef.current) listEndRef.current.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  const dmLabel = useMemo(() => {
-    if (!isModerator || !dmTarget) return "Všichni";
-    const name = dmTarget.nickname || dmTarget.internal_name || `ID ${dmTarget.id}`;
-    return `DM: ${name}`;
-  }, [dmTarget, isModerator]);
-
-  async function handleSend() {
-    const content = text.trim();
-    if (!content) return;
-    try {
-      const recipient = isModerator ? (dmTarget?.id || null) : null; // respondent nikdy neposílá DM
-      await sendMessage(chatId, content, myLinkId, recipient);
-      setText("");
-    } catch (e) {
-      console.error(e);
-      alert("Zprávu se nepodařilo odeslat.");
+    const ms = await listMessages(chatId);
+    setMessages(ms);
+    if (role === 'moderator') {
+      const ls = await listLinks(chatId);
+      setParticipants(ls);
+    } else {
+      setParticipants([]); // skryto pro respondent/klient
     }
   }
 
+  useEffect(() => {
+    refreshAll();
+    if (!chatId) return;
+    if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+    const unsub = subscribeMessages(chatId, (m) => {
+      setMessages(prev => [...prev, m]);
+    });
+    unsubRef.current = unsub;
+    return () => unsub && unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
+  async function onSend() {
+    if (!text.trim()) return;
+    const payload = {
+      chatId,
+      senderRole: role,
+      senderName: name || (role === 'moderator' ? 'Moderátor' : ''),
+      content: text.trim(),
+      recipientLinkId: role === 'moderator' && recipientLinkId ? recipientLinkId : null,
+    };
+    await sendMessage(payload);
+    setText('');
+  }
+
   return (
-    <Layout>
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
-        Chat {chat ? `— ${chat.title || chat.id}` : ""}
-      </h2>
-
-      <div style={{ display: "grid", gridTemplateColumns: isModerator ? "240px 1fr" : "1fr", gap: 12, alignItems: "stretch" }}>
-        {/* LEVÝ SLOUPEC — výběr DM (jen pro moderátora) */}
-        {isModerator && (
-          <div style={panel()}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
-            <button onClick={() => setDmTarget(null)} style={dmButton(!dmTarget)}>
-              Všichni (veřejná zpráva)
-            </button>
-            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-              {participants.map((p) => {
-                const label = p.nickname || p.internal_name || `${p.role} #${p.id}`;
-                const active = dmTarget?.id === p.id;
-                return (
-                  <button key={p.id} onClick={() => setDmTarget(p)} style={dmButton(active)}>
-                    {label} {p.role === "client" ? "👤" : "🧑"}
-                  </button>
-                );
-              })}
+    <div style={{ display: 'grid', gridTemplateColumns: role === 'moderator' ? '240px 1fr' : '1fr', gap: 12 }}>
+      {role === 'moderator' && (
+        <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
+          {participants.length === 0 ? (
+            <div style={{ color: '#666' }}>Zatím nikdo</div>
+          ) : participants.map(p => (
+            <div key={p.id} style={{ padding: '6px 8px', border: '1px solid #eee', borderRadius: 6, marginBottom: 6 }}>
+              <div style={{ fontWeight: 600 }}>{p.internal_name || '(respondent)'} {p.nickname ? `• ${p.nickname}` : ''}</div>
+              <div style={{ fontSize: 12, color: '#555' }}>{p.role}</div>
             </div>
-          </div>
-        )}
-
-        {/* STŘED — chat */}
-        <div style={panel({ display: "flex", flexDirection: "column" })}>
-          <div style={{ marginBottom: 8, fontWeight: 700 }}>
-            Zprávy ({dmLabel})
-          </div>
-
-          <div style={{ flex: 1, overflowY: "auto", border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            {messages.length === 0 ? (
-              <div style={{ color: "#888" }}>Zatím žádné zprávy…</div>
-            ) : (
-              messages.map((m) => (
-                <div key={m.id} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 12, color: "#666" }}>
-                    {m.recipient_link_id ? "DM" : "Veřejná"} • {new Date(m.created_at).toLocaleTimeString()}
-                  </div>
-                  <div>{m.text}</div>
-                </div>
-              ))
-            )}
-            <div ref={listEndRef} />
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder={`Napiš zprávu ${isModerator ? (dmTarget ? "(DM)" : "(veřejná)") : "(veřejná)"}…`}
-              rows={3}
-              style={{ flex: 1, border: "1px solid #ddd", borderRadius: 8, padding: 8 }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-            />
-            <button onClick={handleSend} style={btn()}>
-              Odeslat
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
-            Enter = odeslat, Shift+Enter = nový řádek
+          ))}
+          <div style={{ borderTop: '1px solid #eee', marginTop: 8, paddingTop: 8 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Soukromá zpráva (DM):</div>
+            <select value={recipientLinkId} onChange={(e) => setRecipientLinkId(e.target.value)} style={{ width: '100%', padding: 6, border: '1px solid #ccc', borderRadius: 6 }}>
+              <option value="">— veřejná zpráva —</option>
+              {participants.filter(p => p.role === 'respondent').map(p => (
+                <option key={p.id} value={p.id}>{(p.nickname || p.internal_name || 'Respondent')}</option>
+              ))}
+            </select>
           </div>
         </div>
-      </div>
-    </Layout>
-  );
-}
+      )}
 
-/** ===== styly ===== */
-function panel(extra = {}) {
-  return { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff", ...extra };
-}
-function btn() {
-  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc", background: "#e6e6ff", cursor: "pointer" };
-}
-function dmButton(active) {
-  return {
-    textAlign: "left",
-    padding: "6px 8px",
-    borderRadius: 8,
-    border: active ? "2px solid #7c7cff" : "1px solid #ddd",
-    background: active ? "#f2f2ff" : "#fff",
-    cursor: "pointer",
-  };
+      <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
+        <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+          <div><b>Chat</b> • {role}{name ? ` (${name})` : ''}</div>
+          <div style={{ fontSize: 12, color: '#555' }}>chat_id: {chatId}</div>
+        </div>
+
+        <div style={{ height: 380, overflowY: 'auto', border: '1px solid #eee', borderRadius: 8, padding: 8, marginBottom: 8, background: '#fafafe' }}>
+          {messages.length === 0 ? (
+            <div style={{ color: '#666' }}>Zatím žádné zprávy.</div>
+          ) : messages.map(m => (
+            <div key={m.id} style={{ marginBottom: 8, padding: 8, background: '#fff', border: '1px solid #eee', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, color: '#777' }}>
+                <b>{m.sender_role}</b> {m.sender_name ? `• ${m.sender_name}` : ''} {m.recipient_link_id ? '• (DM)' : ''}
+              </div>
+              <div>{m.content}</div>
+              <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>{new Date(m.created_at).toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            placeholder="Napiš zprávu…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            style={{ flex: 1, padding: 8, border: '1px solid #ccc', borderRadius: 6 }}
+          />
+          <button onClick={onSend} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6e6ff' }}>
+            Odeslat
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
