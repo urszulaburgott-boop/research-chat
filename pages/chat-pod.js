@@ -6,14 +6,10 @@ import supabase from "../lib/supabaseClient";
 
 function makeBaseUrl() {
   if (typeof window !== "undefined") return window.location.origin;
-  // fallback pro build
   return "https://research-chat-mu.vercel.app";
 }
 function rndToken() {
-  return (
-    Math.random().toString(36).slice(2, 10) +
-    Math.random().toString(36).slice(2, 10)
-  );
+  return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
 }
 function buildJoinUrl(type, chatId, token) {
   const base = makeBaseUrl();
@@ -26,7 +22,8 @@ function buildJoinUrl(type, chatId, token) {
 
 export default function ChatPodManager() {
   const router = useRouter();
-  const { id: chatId } = router.query;
+  const { isReady, query } = router;
+  const chatId = query?.id;
 
   const [chat, setChat] = useState(null);
   const [links, setLinks] = useState([]);
@@ -34,19 +31,20 @@ export default function ChatPodManager() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const nextRespLabel = useMemo(() => {
+  // vstup pro respondenta
+  const [respName, setRespName] = useState("");
+  const nextRespPlaceholder = useMemo(() => {
     const count = links.filter((l) => l.role === "respondent").length;
     return `Respondent ${count + 1}`;
   }, [links]);
 
   useEffect(() => {
-    if (!chatId) return;
+    if (!isReady || !chatId) return;
     (async () => {
       try {
         setLoading(true);
         setError("");
 
-        // načti podokno
         const { data: cw, error: eCw } = await supabase
           .from("chat_windows")
           .select("*")
@@ -56,7 +54,6 @@ export default function ChatPodManager() {
         if (eCw) throw eCw;
         setChat(cw);
 
-        // načti linky
         const { data: lk, error: eLk } = await supabase
           .from("chat_links")
           .select("*")
@@ -71,9 +68,9 @@ export default function ChatPodManager() {
         setLoading(false);
       }
     })();
-  }, [chatId]);
+  }, [isReady, chatId]);
 
-  async function createLink(role, label, multi) {
+  async function createLink(role, internalName, multi) {
     try {
       setBusy(true);
       setError("");
@@ -87,7 +84,7 @@ export default function ChatPodManager() {
           {
             chat_id: chatId,
             role,
-            internal_name: label,
+            internal_name: internalName || "",
             url,
             token,
             nickname: "",
@@ -99,6 +96,7 @@ export default function ChatPodManager() {
       if (e) throw e;
 
       setLinks((prev) => [...prev, data]);
+      setRespName("");
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -115,12 +113,25 @@ export default function ChatPodManager() {
 
   return (
     <Layout>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>
           Podokno: {chat ? chat.title || chat.id : chatId || "—"}
         </h1>
+
+        {/* blok respondent */}
+        <input
+          placeholder={nextRespPlaceholder}
+          value={respName}
+          onChange={(e) => setRespName(e.target.value)}
+          style={{
+            padding: "8px 10px",
+            border: "1px solid #ccc",
+            borderRadius: 8,
+            minWidth: 220,
+          }}
+        />
         <button
-          onClick={() => createLink("respondent", nextRespLabel, false)}
+          onClick={() => createLink("respondent", respName || nextRespPlaceholder, false)}
           disabled={busy || !chatId}
           style={{
             padding: "8px 12px",
@@ -132,6 +143,8 @@ export default function ChatPodManager() {
         >
           {busy ? "Pracuji…" : "Vytvořit odkaz pro respondenta"}
         </button>
+
+        {/* blok klient */}
         <button
           onClick={() => createLink("client", "Klient (multi)", true)}
           disabled={busy || !chatId}
@@ -147,9 +160,7 @@ export default function ChatPodManager() {
         </button>
       </div>
 
-      {error && (
-        <div style={{ marginTop: 12, color: "#b00020" }}>Chyba: {error}</div>
-      )}
+      {error && <div style={{ marginTop: 12, color: "#b00020" }}>Chyba: {error}</div>}
 
       {loading ? (
         <p style={{ marginTop: 16 }}>Načítám…</p>
@@ -182,21 +193,10 @@ export default function ChatPodManager() {
                     {l.role}
                   </span>
                   <strong>{l.internal_name || "—"}</strong>
-                  {l.multi ? (
-                    <span style={{ fontSize: 12, color: "#666" }}>
-                      (multi)
-                    </span>
-                  ) : null}
+                  {l.multi ? <span style={{ fontSize: 12, color: "#666" }}>(multi)</span> : null}
                 </div>
                 <div style={{ fontSize: 12, color: "#666" }}>ID: {l.id}</div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                  }}
-                >
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <input
                     value={l.url || ""}
                     readOnly
