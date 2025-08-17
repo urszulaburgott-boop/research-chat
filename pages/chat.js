@@ -1,132 +1,138 @@
 // pages/chat.js
-import { useEffect, useRef, useState } from 'react';
-import { listMessages, sendMessage, subscribeMessages, listLinks } from '../lib/chatApi';
+import { useEffect, useMemo, useRef, useState } from "react";
+import Layout from "../components/Layout";
+import { listMessages, sendMessage, subscribeMessages, listLinks } from "../lib/chatApi";
 
-export default function Chat() {
-  const [chatId, setChatId] = useState(null);
-  const [role, setRole] = useState('guest'); // 'moderator' | 'respondent' | 'client'
-  const [name, setName] = useState('');      // z brány nebo "Moderátor"
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState('');
+export default function ChatPage() {
+  const [chatId, setChatId] = useState("");
+  const [role, setRole] = useState("moderator"); // moderator | client | respondent
+  const [linkId, setLinkId] = useState(null);    // id linku účastníka (pokud je)
+  const [nick, setNick] = useState("");
+
+  const [msgs, setMsgs] = useState([]);
+  const [text, setText] = useState("");
+
   const [participants, setParticipants] = useState([]);
-  const [recipientLinkId, setRecipientLinkId] = useState(''); // jen pro moderátora (DM)
-  const unsubRef = useRef(null);
+  const [recipient, setRecipient] = useState(null); // id linku pro DM (jen moderátor)
+
+  const listRef = useRef(null);
 
   useEffect(() => {
-    const ps = new URLSearchParams(window.location.search);
-    const c = ps.get('chat');
-    setChatId(c || null);
-
-    // Kdo jsem:
-    const as = ps.get('as'); // pokud je ?as=moderator → moderátor
-    if (as === 'moderator') {
-      setRole('moderator');
-      setName('Moderátor');
-      sessionStorage.setItem('rc_chat_role', 'moderator');
-      sessionStorage.setItem('rc_chat_name', 'Moderátor');
-      sessionStorage.removeItem('rc_link_id'); // moderátor nemá link
-    } else {
-      const r = sessionStorage.getItem('rc_chat_role');
-      const n = sessionStorage.getItem('rc_chat_name');
-      setRole(r || 'guest');
-      setName(n || '');
-    }
+    const url = new URL(window.location.href);
+    setChatId((url.searchParams.get("chat") || "").toString());
+    setRole((url.searchParams.get("role") || "moderator").toString());
+    const lid = url.searchParams.get("link");
+    const nn = url.searchParams.get("nick");
+    if (lid) setLinkId(lid.toString());
+    if (nn) setNick(nn.toString());
   }, []);
 
-  async function refreshAll() {
-    if (!chatId) return;
-    const ms = await listMessages(chatId);
-    setMessages(ms);
-    if (role === 'moderator') {
-      const ls = await listLinks(chatId);
-      setParticipants(ls);
-    } else {
-      setParticipants([]); // skryto pro respondent/klient
-    }
-  }
-
   useEffect(() => {
-    refreshAll();
     if (!chatId) return;
-    if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
-    const unsub = subscribeMessages(chatId, (m) => {
-      setMessages(prev => [...prev, m]);
+    loadAll(chatId);
+    const off = subscribeMessages(chatId, (m) => {
+      setMsgs((prev) => [...prev, m]);
+      setTimeout(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }), 0);
     });
-    unsubRef.current = unsub;
-    return () => unsub && unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => off && off();
   }, [chatId]);
 
+  async function loadAll(id) {
+    const [m, ls] = await Promise.all([listMessages(id), listLinks(id)]);
+    setMsgs(m);
+    setParticipants(ls);
+    setTimeout(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }), 0);
+  }
+
+  const canDM = role === "moderator"; // jen moderátor má DM
+  const myName = useMemo(() => {
+    if (role === "respondent") return nick || "Respondent";
+    if (role === "client") return "Klient";
+    return "Moderátor";
+  }, [role, nick]);
+
   async function onSend() {
-    if (!text.trim()) return;
-    const payload = {
+    const content = text.trim();
+    if (!content) return;
+    await sendMessage({
       chatId,
       senderRole: role,
-      senderName: name || (role === 'moderator' ? 'Moderátor' : ''),
-      content: text.trim(),
-      recipientLinkId: role === 'moderator' && recipientLinkId ? recipientLinkId : null,
-    };
-    await sendMessage(payload);
-    setText('');
+      senderName: myName,
+      content,
+      recipientLinkId: canDM ? recipient || null : null,
+    });
+    setText("");
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: role === 'moderator' ? '240px 1fr' : '1fr', gap: 12 }}>
-      {role === 'moderator' && (
-        <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
-          {participants.length === 0 ? (
-            <div style={{ color: '#666' }}>Zatím nikdo</div>
-          ) : participants.map(p => (
-            <div key={p.id} style={{ padding: '6px 8px', border: '1px solid #eee', borderRadius: 6, marginBottom: 6 }}>
-              <div style={{ fontWeight: 600 }}>{p.internal_name || '(respondent)'} {p.nickname ? `• ${p.nickname}` : ''}</div>
-              <div style={{ fontSize: 12, color: '#555' }}>{p.role}</div>
-            </div>
-          ))}
-          <div style={{ borderTop: '1px solid #eee', marginTop: 8, paddingTop: 8 }}>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>Soukromá zpráva (DM):</div>
-            <select value={recipientLinkId} onChange={(e) => setRecipientLinkId(e.target.value)} style={{ width: '100%', padding: 6, border: '1px solid #ccc', borderRadius: 6 }}>
-              <option value="">— veřejná zpráva —</option>
-              {participants.filter(p => p.role === 'respondent').map(p => (
-                <option key={p.id} value={p.id}>{(p.nickname || p.internal_name || 'Respondent')}</option>
+    <Layout>
+      <h1 style={{ fontSize: 22, fontWeight: 700 }}>Chat</h1>
+      <div style={{ marginBottom: 8, opacity: 0.7, fontSize: 12 }}>
+        chat: {chatId} • role: {role}{nick ? ` • přezdívka: ${nick}` : ""}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: canDM ? "240px 1fr" : "1fr", gap: 12 }}>
+        {canDM && (
+          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>Účastníci</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {participants.map((p) => (
+                <label key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="radio"
+                    name="recipient"
+                    value={p.id}
+                    checked={recipient === p.id}
+                    onChange={() => setRecipient(p.id)}
+                  />
+                  <span>
+                    {p.role === "client" ? "Klient" : "Respondent"} —{" "}
+                    {p.nickname || p.internal_name || p.id.slice(0, 6)}
+                  </span>
+                </label>
               ))}
-            </select>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                <input
+                  type="radio"
+                  name="recipient"
+                  value=""
+                  checked={!recipient}
+                  onChange={() => setRecipient(null)}
+                />
+                <span>Všem (veřejná zpráva)</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gridTemplateRows: "1fr auto", minHeight: 420 }}>
+          <div ref={listRef} style={{ overflowY: "auto", paddingRight: 6 }}>
+            {msgs.map((m) => (
+              <div key={m.id} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>
+                  {m.sender_role} {m.sender_name ? `• ${m.sender_name}` : ""}{" "}
+                  {m.recipient_link_id ? "(DM)" : ""}
+                </div>
+                <div>{m.content}</div>
+              </div>
+            ))}
+            {msgs.length === 0 && <div>Žádné zprávy.</div>}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Napište zprávu…"
+              onKeyDown={(e) => e.key === "Enter" ? onSend() : null}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, flex: 1 }}
+            />
+            <button onClick={onSend} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc" }}>
+              Odeslat
+            </button>
           </div>
         </div>
-      )}
-
-      <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
-        <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
-          <div><b>Chat</b> • {role}{name ? ` (${name})` : ''}</div>
-          <div style={{ fontSize: 12, color: '#555' }}>chat_id: {chatId}</div>
-        </div>
-
-        <div style={{ height: 380, overflowY: 'auto', border: '1px solid #eee', borderRadius: 8, padding: 8, marginBottom: 8, background: '#fafafe' }}>
-          {messages.length === 0 ? (
-            <div style={{ color: '#666' }}>Zatím žádné zprávy.</div>
-          ) : messages.map(m => (
-            <div key={m.id} style={{ marginBottom: 8, padding: 8, background: '#fff', border: '1px solid #eee', borderRadius: 8 }}>
-              <div style={{ fontSize: 12, color: '#777' }}>
-                <b>{m.sender_role}</b> {m.sender_name ? `• ${m.sender_name}` : ''} {m.recipient_link_id ? '• (DM)' : ''}
-              </div>
-              <div>{m.content}</div>
-              <div style={{ fontSize: 11, color: '#999', marginTop: 4 }}>{new Date(m.created_at).toLocaleString()}</div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            placeholder="Napiš zprávu…"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            style={{ flex: 1, padding: 8, border: '1px solid #ccc', borderRadius: 6 }}
-          />
-          <button onClick={onSend} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6e6ff' }}>
-            Odeslat
-          </button>
-        </div>
       </div>
-    </div>
+    </Layout>
   );
 }
