@@ -1,135 +1,144 @@
 // pages/project.js
-import { useEffect, useState } from 'react';
-import { listChatWindows, createChatWindow, renameChatWindow } from '../lib/chatApi';
+import { useEffect, useState } from "react";
+import Layout from "../components/Layout";
+import {
+  getProjectIdFromAnywhere,
+  setProjectIdLocal,
+  getProjectById,
+  listChatWindows,
+  createChatWindow,
+  renameChatWindow,
+} from "../lib/chatApi";
+import Link from "next/link";
 
-export default function Project() {
-  const [projectId, setProjectId] = useState(null);
-  const [pendingId, setPendingId] = useState('');
-  const [chatWindows, setChatWindows] = useState([]);
+export default function ProjectPage() {
+  const [projectId, setProjectId] = useState("");
+  const [project, setProject] = useState(null);
+  const [pods, setPods] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [renameMap, setRenameMap] = useState({});
+  const [newTitle, setNewTitle] = useState("");
 
-  // 1) načtení z URL nebo localStorage
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const q = params.get('project');
-    const saved = window.localStorage.getItem('project_id');
-    if (q) {
-      window.localStorage.setItem('project_id', q);
-      setProjectId(q);
-    } else if (saved) {
-      setProjectId(saved);
+    const id = getProjectIdFromAnywhere();
+    if (id) {
+      setProjectId(id);
+      loadAll(id);
     }
   }, []);
 
-  // 2) načtení podoken
-  async function refresh() {
-    if (!projectId) return;
-    setLoading(true);
+  async function loadAll(id) {
     try {
-      const rows = await listChatWindows(projectId);
-      setChatWindows(rows);
+      setLoading(true);
+      const p = await getProjectById(id);
+      const w = await listChatWindows(id);
+      setProject(p);
+      setPods(w);
+    } catch (e) {
+      console.error(e);
+      setProject(null);
+      setPods([]);
     } finally {
       setLoading(false);
     }
   }
-  useEffect(() => { refresh(); }, [projectId]);
 
-  // 3) akce
-  async function onCreate() {
-    if (!projectId) { alert('Chybí project_id. Nejprve ho nastav níže.'); return; }
-    await createChatWindow(projectId);
-    await refresh();
+  async function onSaveProjectId() {
+    if (!projectId) return;
+    setProjectIdLocal(projectId);
+    await loadAll(projectId);
   }
+
+  async function onAddPod() {
+    if (!projectId) {
+      alert("Zadej Project ID a ulož ho.");
+      return;
+    }
+    try {
+      setLoading(true);
+      const pod = await createChatWindow(projectId, newTitle || "Podokno");
+      setNewTitle("");
+      await loadAll(projectId);
+    } catch (e) {
+      alert("Chyba při vytváření podokna: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function onRename(id) {
-    const val = renameMap[id];
-    if (!val) return;
-    await renameChatWindow(id, val);
-    setRenameMap(m => ({ ...m, [id]: '' }));
-    await refresh();
-  }
-
-  // 4) nastavení/mazání project_id v UI
-  function setProjectIdFromUI() {
-    const id = (pendingId || '').trim();
-    if (!id) { alert('Vlož project_id (UUID).'); return; }
-    window.localStorage.setItem('project_id', id);
-    setProjectId(id);
-    setPendingId('');
-  }
-  function clearProjectId() {
-    window.localStorage.removeItem('project_id');
-    setProjectId(null);
+    const name = prompt("Nový název podokna:");
+    if (!name) return;
+    try {
+      await renameChatWindow(id, name);
+      await loadAll(projectId);
+    } catch (e) {
+      alert("Chyba přejmenování: " + e.message);
+    }
   }
 
   return (
-    <div>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>Projekt</h1>
+    <Layout>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Projekt</h1>
 
-      {/* Box pro nastavení Project ID */}
-      <div style={{ marginBottom: 12, padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
-        <div style={{ marginBottom: 8 }}>
-          <b>Project ID:</b> <code>{projectId || '(není nastaveno)'}</code>
-        </div>
-        {!projectId ? (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <input
-              placeholder="Vlož UUID projektu (z tabulky projects)"
-              value={pendingId}
-              onChange={(e) => setPendingId(e.target.value)}
-              style={{ padding: 8, border: '1px solid #ccc', borderRadius: 6, minWidth: 340 }}
-            />
-            <button onClick={setProjectIdFromUI} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6ffe6' }}>
-              Nastavit Project ID
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={onCreate} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6e6ff' }}>
-              Přidat podokno
-            </button>
-            <button onClick={clearProjectId} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#ffecec' }}>
-              Odstranit Project ID z tohoto prohlížeče
-            </button>
-          </div>
-        )}
-        <div style={{ marginTop: 6, fontSize: 12, color: '#666' }}>
-          Tip: Project ID stačí nastavit jednou (ukládá se do tohoto prohlížeče).
+      <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+        <label>Project ID (UUID z tabulky <em>projects</em>)</label>
+        <input
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}
+        />
+        <div>
+          <button onClick={onSaveProjectId} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc" }}>
+            Uložit Project ID
+          </button>
         </div>
       </div>
 
-      {/* Seznam podoken */}
-      <div style={{ display: 'grid', gap: 12 }}>
-        {loading && <div>Načítám…</div>}
-        {!loading && chatWindows.map(w => (
-          <div key={w.id} style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff' }}>
-            <div style={{ fontWeight: 600 }}>{w.title || '(bez názvu)'}</div>
-            <div style={{ fontSize: 12, color: '#555' }}>chat_id: {w.id}</div>
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <a href={`/chat-pod?chat=${encodeURIComponent(w.id)}`} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#f3f3ff', textDecoration: 'none' }}>
-                Otevřít podokno
-              </a>
-              <a href={`/chat?chat=${encodeURIComponent(w.id)}&as=moderator`} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc', background: '#f3fff3', textDecoration: 'none' }}>
-                Otevřít chat jako moderátor
-              </a>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <input
-                placeholder="přejmenovat…"
-                value={renameMap[w.id] || ''}
-                onChange={(e) => setRenameMap(m => ({ ...m, [w.id]: e.target.value }))}
-                style={{ padding: 6, border: '1px solid #ccc', borderRadius: 6 }}
-              />
-              <button onClick={() => onRename(w.id)} style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 6, border: '1px solid #ccc' }}>
-                Uložit název
+      {loading && <p>Načítám…</p>}
+      {project && (
+        <div style={{ marginBottom: 16, padding: 12, border: "1px solid #eee", borderRadius: 8 }}>
+          <div><b>Název projektu:</b> {project.name || "(bez názvu)"}</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>id: {project.id}</div>
+        </div>
+      )}
+
+      <h2 style={{ fontSize: 18, fontWeight: 700, marginTop: 12 }}>Podokna</h2>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "8px 0 16px" }}>
+        <input
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+          placeholder="Název podokna (volitelné)"
+          style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, flex: 1 }}
+        />
+        <button onClick={onAddPod} style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #ccc" }}>
+          Přidat podokno
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gap: 8 }}>
+        {pods.map((p) => (
+          <div key={p.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <b>{p.title || "(bez názvu)"}</b>
+              <span style={{ fontSize: 12, opacity: 0.7 }}>id: {p.id}</span>
+              <button onClick={() => onRename(p.id)} style={{ marginLeft: "auto", padding: "4px 8px" }}>
+                Přejmenovat
               </button>
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Link href={`/chat-pod?chat=${p.id}`} style={{ textDecoration: "underline" }}>
+                Správa podokna (linky)
+              </Link>
+              <Link href={`/chat?chat=${p.id}&role=moderator`} style={{ textDecoration: "underline" }}>
+                Otevřít chat jako moderátor
+              </Link>
             </div>
           </div>
         ))}
-        {!loading && chatWindows.length === 0 && projectId && (
-          <div style={{ color: '#666' }}>Zatím žádná podokna.</div>
-        )}
+        {pods.length === 0 && !loading && <div>Žádná podokna zatím nejsou.</div>}
       </div>
-    </div>
+    </Layout>
   );
 }
