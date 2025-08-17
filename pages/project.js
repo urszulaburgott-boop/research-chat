@@ -2,7 +2,7 @@
 import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import Layout from "../components/Layout";
-import supabase from "../lib/supabaseClient"; // musí existovat lib/supabaseClient.js
+import supabase from "../lib/supabaseClient";
 
 export default function ProjectPage() {
   const router = useRouter();
@@ -14,16 +14,13 @@ export default function ProjectPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // Načtení projektu + podoken
   useEffect(() => {
     if (!projectId) return;
-
-    async function loadAll() {
+    (async () => {
       try {
         setLoading(true);
         setError("");
 
-        // projekt
         const { data: proj, error: eProj } = await supabase
           .from("projects")
           .select("*")
@@ -33,7 +30,6 @@ export default function ProjectPage() {
         if (eProj) throw eProj;
         setProject(proj);
 
-        // podokna
         const { data: cw, error: eCw } = await supabase
           .from("chat_windows")
           .select("*")
@@ -48,9 +44,7 @@ export default function ProjectPage() {
       } finally {
         setLoading(false);
       }
-    }
-
-    loadAll();
+    })();
   }, [projectId]);
 
   async function createChatWindow() {
@@ -61,23 +55,12 @@ export default function ProjectPage() {
       const title = `Podokno ${chats.length + 1}`;
       const { data, error: e } = await supabase
         .from("chat_windows")
-        .insert([
-          {
-            project_id: projectId,
-            title,
-            // volitelné sloupce – pokud je v DB nemáš, klidně smaž:
-            links_disabled: false,
-            chat_date: null,
-          },
-        ])
+        .insert([{ project_id: projectId, title }]) // bez chat_date / links_disabled
         .select()
         .single();
-
       if (e) throw e;
 
-      // Přidej do seznamu a rovnou můžeš otevřít detail
       setChats((prev) => [...prev, data]);
-      // router.push(`/chat-pod?id=${data.id}`); // pokud chceš po vytvoření hned otevřít
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -111,9 +94,7 @@ export default function ProjectPage() {
       </div>
 
       {error && (
-        <div style={{ marginTop: 12, color: "#b00020" }}>
-          Chyba: {error}
-        </div>
+        <div style={{ marginTop: 12, color: "#b00020" }}>Chyba: {error}</div>
       )}
 
       {loading ? (
