@@ -1,108 +1,96 @@
 // pages/join.js
-import { useEffect, useState } from "react";
-import Layout from "../components/Layout";
-import { useRouter } from "next/router";
-import { getLinkByToken, setNicknameOnLink, createConsent } from "../lib/chatApi";
+import { useEffect, useState } from 'react';
+import { getLinkByToken, setNicknameOnLink, createConsent } from '../lib/chatApi';
 
-export default function JoinGate() {
-  const router = useRouter();
-  const { type, chat, l } = router.query;
-
-  const [loading, setLoading] = useState(true);
+export default function Join() {
+  const [type, setType] = useState('respondent'); // z URL
+  const [chatId, setChatId] = useState(null);
+  const [token, setToken] = useState(null);
   const [link, setLink] = useState(null);
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState('');
   const [agreeDpa, setAgreeDpa] = useState(false);
   const [agreeStudy, setAgreeStudy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!l) return;
-    (async () => {
-      try {
-        const row = await getLinkByToken(l);
-        if (!row || row.chat_id !== chat) {
-          setError("Odkaz nenalezen.");
-        } else if (type && row.role !== type) {
-          setError("Odkaz není pro tento typ uživatele.");
-        } else {
-          setLink(row);
-        }
-      } catch (e) {
-        console.error(e);
-        setError("Odkaz nenalezen.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [l, chat, type]);
+    const p = new URLSearchParams(window.location.search);
+    const t = p.get('type') || 'respondent';
+    const c = p.get('chat');
+    const l = p.get('l');
+    setType(t);
+    setChatId(c);
+    setToken(l);
+  }, []);
 
-  async function handleEnter() {
-    if (!link) return;
-    if (link.role === "respondent" && !nickname.trim()) {
-      alert("Vyplň přezdívku.");
-      return;
-    }
-    try {
-      if (link.role === "respondent") {
-        // Ulož přezdívku na link
-        await setNicknameOnLink(link.id, nickname.trim());
-        // Ulož souhlas
-        await createConsent(link.id, nickname.trim(), agreeDpa, agreeStudy);
+  useEffect(() => {
+    async function load() {
+      if (!token) return;
+      try {
+        const lk = await getLinkByToken(token);
+        if (!lk) { setError('Odkaz nenalezen.'); return; }
+        if (lk.chat_id !== chatId) {
+          // volitelně můžeme jen přepsat chatId
+          setError('Odkaz nepatří k tomuto chatu.');
+          return;
+        }
+        if (lk.role !== type) {
+          setError('Odkaz není pro tento typ uživatele.');
+          return;
+        }
+        setLink(lk);
+      } catch (e) {
+        setError('Odkaz nenalezen.');
       }
-      router.replace(`/chat?chat=${encodeURIComponent(link.chat_id)}&link=${encodeURIComponent(link.id)}`);
-    } catch (e) {
-      console.error(e);
-      alert("Nepodařilo se projít bránou.");
     }
+    load();
+  }, [token, chatId, type]);
+
+  async function onEnter() {
+    if (!link) return;
+    if (!nickname.trim()) { alert('Zadej přezdívku.'); return; }
+    if (!agreeDpa || !agreeStudy) { alert('Musíš odsouhlasit oba body.'); return; }
+    await setNicknameOnLink(link.id, nickname.trim());
+    await createConsent(link.id, nickname.trim(), true, true);
+    // uložím si do session info pro chat
+    sessionStorage.setItem('rc_chat_role', link.role);
+    sessionStorage.setItem('rc_chat_name', nickname.trim());
+    sessionStorage.setItem('rc_link_id', link.id);
+    window.location.href = `/chat?chat=${encodeURIComponent(link.chat_id)}`;
   }
 
   return (
-    <Layout>
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
-        {type === "client" ? "Brána klienta" : "Brána respondenta"}
-      </h2>
-
-      {loading ? (
+    <div>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 10 }}>Vstupní brána</h1>
+      {error ? (
+        <div style={{ padding: 12, border: '1px solid #f0caca', background: '#ffecec', borderRadius: 8 }}>{error}</div>
+      ) : !link ? (
         <div>Načítám…</div>
-      ) : error ? (
-        <div style={{ color: "crimson" }}>{error}</div>
       ) : (
-        <>
-          {link.role === "respondent" ? (
-            <div style={{ display: "grid", gap: 12, maxWidth: 520 }}>
-              <label>
-                <div style={{ marginBottom: 6 }}>Přezdívka, která se bude zobrazovat v chatu:</div>
-                <input
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value)}
-                  placeholder="Zadejte přezdívku"
-                  style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: "100%" }}
-                />
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={agreeDpa} onChange={(e) => setAgreeDpa(e.target.checked)} />
-                <span>Souhlasím se zpracováním osobních údajů</span>
-              </label>
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={agreeStudy} onChange={(e) => setAgreeStudy(e.target.checked)} />
-                <span>Souhlasím s účastí ve studii</span>
-              </label>
-              <button onClick={handleEnter} style={btnPrimary()}>
-                Vstoupit do chatu
-              </button>
-            </div>
-          ) : (
-            <div>
-              <p>Jste připraveni vstoupit do chatu jako klient.</p>
-              <button onClick={handleEnter} style={btnPrimary()}>Vstoupit do chatu</button>
-            </div>
-          )}
-        </>
+        <div style={{ padding: 12, border: '1px solid #e5e5ef', borderRadius: 8, background: '#fff', maxWidth: 520 }}>
+          <div style={{ marginBottom: 10 }}>
+            <div><b>Typ:</b> {link.role}</div>
+            <div style={{ fontSize: 12, color: '#555' }}>chat_id: {link.chat_id}</div>
+          </div>
+          <div style={{ marginBottom: 10 }}>
+            <div>Zadej přezdívku, která se bude zobrazovat v chatu:</div>
+            <input
+              placeholder="např. JanaK"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              style={{ marginTop: 6, padding: 8, border: '1px solid #ccc', borderRadius: 6, width: '100%' }}
+            />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label><input type="checkbox" checked={agreeDpa} onChange={(e) => setAgreeDpa(e.target.checked)} /> Souhlasím se zpracováním údajů</label>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label><input type="checkbox" checked={agreeStudy} onChange={(e) => setAgreeStudy(e.target.checked)} /> Souhlasím s účastí ve studii</label>
+          </div>
+          <button onClick={onEnter} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', background: '#e6ffe6' }}>
+            Vstoupit do chatu
+          </button>
+        </div>
       )}
-    </Layout>
+    </div>
   );
-}
-
-function btnPrimary() {
-  return { padding: "8px 12px", borderRadius: 8, border: "1px solid #7c7cff", background: "#dedeff", cursor: "pointer", fontWeight: 600 };
 }
